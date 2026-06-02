@@ -1,19 +1,47 @@
 let stars = [];
 let missiles = [];
 let explosions = [];
+let score = 0;
+let timeLeft = 30;
+let gameState = "playing"; // playing, gameover
+let spawnInterval;
+let timerInterval;
+
 const colors = ['#ff595e', '#ffca3a', '#8ac926', '#1982c4', '#6a4c93'];
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
+  startGame();
+}
+
+function startGame() {
+  // 重置所有變數
+  stars = [];
+  missiles = [];
+  explosions = [];
+  score = 0;
+  timeLeft = 30;
+  gameState = "playing";
+
   // 初始化產生 20 顆星星
   for (let i = 0; i < 20; i++) {
     stars.push(new Star());
   }
 
   // 每隔 3 秒鐘產生一個物件
-  setInterval(() => {
-    stars.push(new Star());
-  }, 3000);
+  // 移除舊的固定間隔，改用 draw 內的動態邏輯
+  if (spawnInterval) clearInterval(spawnInterval);
+
+  // 倒數計時器
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    if (gameState === "playing") {
+      timeLeft--;
+      if (timeLeft <= 0) {
+        gameState = "gameover";
+      }
+    }
+  }, 1000);
 }
 
 function draw() {
@@ -22,6 +50,22 @@ function draw() {
   fill(0, 40); // 40 是透明度，數值越小拖影越長
   rect(0, 0, width, height);
   
+  if (gameState === "playing") {
+    runGameLogic();
+  } else if (gameState === "gameover") {
+    displayGameOver();
+  }
+}
+
+function runGameLogic() {
+  // 計算難度加成：隨時間減少而增加 (1.0 -> 2.5)
+  let difficulty = map(timeLeft, 30, 0, 1, 2.5);
+  
+  // 動態產生星星：時間越短產生越快
+  if (frameCount % floor(180 / difficulty) === 0) {
+    stars.push(new Star());
+  }
+
   // 處理爆炸效果
   for (let i = explosions.length - 1; i >= 0; i--) {
     explosions[i].update();
@@ -34,7 +78,7 @@ function draw() {
   // 處理星星
   for (let i = stars.length - 1; i >= 0; i--) {
     stars[i].checkCollision(stars);
-    stars[i].update();
+    stars[i].update(difficulty); // 傳入難度倍率
     stars[i].display();
   }
 
@@ -49,6 +93,7 @@ function draw() {
         // 產生爆炸
         explosions.push(new Explosion(stars[j].pos.x, stars[j].pos.y, stars[j].color));
         // 移除星星與飛彈
+        score += 10; // 每打爆一個加 10 分
         stars.splice(j, 1);
         missiles.splice(i, 1);
         break; // 跳出內層迴圈，因為飛彈已消失
@@ -63,16 +108,76 @@ function draw() {
 
   // 繪製中心箭頭
   drawDoodleArrow();
+
+  // 顯示分數與時間 (左上角)
+  displayHUD();
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }
 
+function displayHUD() {
+  textSize(24);
+  textAlign(LEFT, TOP);
+  noStroke();
+  
+  fill(255);
+  text(`Score: ${score}`, 20, 20);
+  
+  // 倒數 5 秒紅色閃爍警告
+  if (timeLeft <= 5 && frameCount % 30 < 15) {
+    fill(255, 0, 0); // 紅色
+  } else {
+    fill(255);
+  }
+  text(`Time: ${timeLeft}s`, 20, 55);
+}
+
+function displayGameOver() {
+  // 繪製半透明遮罩
+  fill(0, 150);
+  rect(0, 0, width, height);
+
+  // 顯示文字
+  fill(255);
+  textAlign(CENTER, CENTER);
+  textSize(64);
+  text("GAME OVER", width / 2, height / 2 - 50);
+  textSize(32);
+  text(`Final Score: ${score}`, width / 2, height / 2 + 20);
+  
+  // 詢問玩家
+  fill(255, 200);
+  textSize(24);
+  text("Press 'R' to Restart or 'E' to End", width / 2, height / 2 + 80);
+  
+  // 結束遊戲的提示
+  if (gameState === "gameover" && frameCount % 60 < 30) {
+    fill(255, 255, 0);
+    text("What's your next move?", width / 2, height / 2 + 130);
+  }
+}
+
 function mousePressed() {
+  if (gameState !== "playing") return;
   // 按下滑鼠左鍵發射飛彈
   let angle = atan2(mouseY - height / 2, mouseX - width / 2);
   missiles.push(new Missile(width / 2, height / 2, angle));
+}
+
+function keyPressed() {
+  if (gameState === "gameover") {
+    if (key === 'r' || key === 'R') {
+      startGame();
+    } else if (key === 'e' || key === 'E') {
+      noLoop(); // 結束遊戲繪製
+      background(0);
+      fill(255);
+      textAlign(CENTER, CENTER);
+      text("Thanks for playing!", width/2, height/2);
+    }
+  }
 }
 
 function drawDoodleArrow() {
@@ -183,7 +288,7 @@ class Star {
     this.isScared = false;
   }
 
-  update() {
+  update(difficulty = 1) {
     let mouseVec = createVector(mouseX, mouseY);
     let d = dist(this.pos.x, this.pos.y, mouseX, mouseY);
 
@@ -193,11 +298,11 @@ class Star {
     if (this.pos.y < -this.size) this.pos.y = height + this.size;
     if (this.pos.y > height + this.size) this.pos.y = -this.size;
 
-    this.handleInteraction(d, mouseVec);
+    this.handleInteraction(d, mouseVec, difficulty);
   }
 
   // 處理與滑鼠的互動
-  handleInteraction(d, mouseVec) {
+  handleInteraction(d, mouseVec, difficulty) {
     // 當滑鼠靠近時 (距離小於 150)
     if (d < 150) {
       this.isScared = true;
@@ -207,7 +312,7 @@ class Star {
       this.pos.add(pushForce);
     } else {
       this.isScared = false;
-      this.pos.add(this.vel);
+      this.pos.add(p5.Vector.mult(this.vel, difficulty)); // 根據難度加速
     }
   }
 
